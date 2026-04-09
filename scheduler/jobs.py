@@ -97,10 +97,10 @@ def setup_scheduler(app) -> AsyncIOScheduler:
     bot = app.bot
 
     scheduler.add_job(
-        lambda: app.create_task(send_daily_reports(bot)),
-        CronTrigger(hour=DAILY_REPORT_HOUR, minute=DAILY_REPORT_MINUTE, timezone=TIMEZONE),
-        id="daily_reports",
-        replace_existing=True,
+    lambda: app.create_task(send_daily_reports(bot)),
+    IntervalTrigger(minutes=1, timezone=TIMEZONE),
+    id="daily_reports",
+    replace_existing=True,
     )
     scheduler.add_job(
         lambda: app.create_task(run_stock_check(bot)),
