@@ -122,7 +122,7 @@ def setup_scheduler(app) -> AsyncIOScheduler:
 
     scheduler.add_job(
         daily_reports_job,
-        IntervalTrigger(minutes=1, timezone=TIMEZONE),
+        CronTrigger(hour=DAILY_REPORT_HOUR, minute=DAILY_REPORT_MINUTE, timezone=TIMEZONE),
         id="daily_reports",
         replace_existing=True,
     )
