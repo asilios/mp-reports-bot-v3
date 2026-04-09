@@ -41,3 +41,5 @@ python main.py
 - This package intentionally does **not** include `.env`, `.git`, `venv`, SQLite DB files, or CSV state dumps.
 - Wildberries remains a stub.
 - If your old tokens or keys were shared in the previous ZIP, rotate them.
+
+redeploy trigger
