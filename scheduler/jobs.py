@@ -96,20 +96,44 @@ def setup_scheduler(app) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     bot = app.bot
 
+    async def daily_reports_job():
+        logger.info("daily_reports_job started")
+        try:
+            await send_daily_reports(bot)
+            logger.info("daily_reports_job finished")
+        except Exception:
+            logger.exception("daily_reports_job failed")
+
+    async def stock_check_job():
+        logger.info("stock_check_job started")
+        try:
+            await run_stock_check(bot)
+            logger.info("stock_check_job finished")
+        except Exception:
+            logger.exception("stock_check_job failed")
+
+    async def review_check_job():
+        logger.info("review_check_job started")
+        try:
+            await run_review_check(bot)
+            logger.info("review_check_job finished")
+        except Exception:
+            logger.exception("review_check_job failed")
+
     scheduler.add_job(
-    lambda: app.create_task(send_daily_reports(bot)),
-    IntervalTrigger(minutes=1, timezone=TIMEZONE),
-    id="daily_reports",
-    replace_existing=True,
+        daily_reports_job,
+        IntervalTrigger(minutes=1, timezone=TIMEZONE),
+        id="daily_reports",
+        replace_existing=True,
     )
     scheduler.add_job(
-        lambda: app.create_task(run_stock_check(bot)),
+        stock_check_job,
         IntervalTrigger(hours=STOCK_CHECK_HOURS, timezone=TIMEZONE),
         id="stock_check",
         replace_existing=True,
     )
     scheduler.add_job(
-        lambda: app.create_task(run_review_check(bot)),
+        review_check_job,
         IntervalTrigger(hours=REVIEW_CHECK_HOURS, timezone=TIMEZONE),
         id="review_check",
         replace_existing=True,
