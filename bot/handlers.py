@@ -204,3 +204,72 @@ async def cmd_fetch(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Done! {total} records saved from {from_date.isoformat()} to {to_date.isoformat()}."
     )
+async def cmd_fetch_wb(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_admin(update):
+        await update.message.reply_text("❌ This command is admin-only.")
+        return
+
+    try:
+        from_date, to_date = _parse_fetch_args(update.message.text or "")
+    except ValueError as exc:
+        await update.message.reply_text(str(exc))
+        return
+
+    latest_date = yesterday_local()
+    if to_date > latest_date:
+        await update.message.reply_text(f"❌ You can only fetch data through {latest_date.isoformat()}.")
+        return
+    if from_date > to_date:
+        await update.message.reply_text("❌ Start date must be on or before the end date.")
+        return
+
+    await update.message.reply_text(
+        f"⏳ Fetching WB sales data from {from_date.isoformat()} to {to_date.isoformat()}..."
+    )
+
+    from shops.wildberries import build_wb_clients
+    clients = build_wb_clients(WB_SHOPS)
+
+    if not clients:
+        await update.message.reply_text("❌ No WB shops configured. Check WB_A_API_KEY in Railway variables.")
+        return
+
+    total = 0
+    current_date = from_date
+    try:
+        while current_date <= to_date:
+            for _, client in clients.items():
+                try:
+                    sales = await client.get_sales(current_date, current_date)
+                    executemany(
+                        UPSERT_SALES_SQL,
+                        [
+                            (
+                                client.shop_id,
+                                current_date,
+                                item["sku_id"],
+                                item["sku_name"],
+                                int(item["units_sold"]),
+                                float(item["revenue"]),
+                                int(item["returns"]),
+                            )
+                            for item in sales
+                        ],
+                    )
+                    total += len(sales)
+                    await update.message.reply_text(
+                        f"✅ {client.shop_name} {current_date.isoformat()}: {len(sales)} items saved"
+                    )
+                except Exception as exc:
+                    logger.exception("WB fetch failed for %s on %s", client.shop_id, current_date)
+                    await update.message.reply_text(
+                        f"❌ {client.shop_name} {current_date.isoformat()} failed: {exc}"
+                    )
+            current_date += timedelta(days=1)
+    finally:
+        for client in clients.values():
+            await client.close()
+
+    await update.message.reply_text(
+        f"Done! {total} WB records saved from {from_date.isoformat()} to {to_date.isoformat()}."
+    )
