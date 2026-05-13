@@ -30,6 +30,7 @@ async def cmd_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         "/report — generate a report on demand\n"
         "/status — check configured shops\n"
         "/fetch [from] [to] — backfill Ozon sales (admin only)\n\n"
+        "/fetch_wb [from] [to] — backfill WB sales (admin only)\n\n"
         "Daily reports are sent automatically.",
         parse_mode="HTML",
     )
