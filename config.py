@@ -49,6 +49,10 @@ WB_SHOPS: dict[str, dict[str, str | None]] = {
         "name": os.getenv("WB_A_NAME", "WB Shop A"),
         "api_key": os.getenv("WB_A_API_KEY"),
     },
+    "wb_b": {
+        "name": os.getenv("WB_B_NAME", "WB Shop B"),
+        "api_key": os.getenv("WB_B_API_KEY"),
+    },
 }
 
 ALL_SHOPS = {**OZON_SHOPS, **WB_SHOPS}
