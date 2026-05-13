@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from datetime import date
 from typing import Any
 
@@ -9,9 +10,10 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-WB_BASE = "https://statistics-api.wildberries.ru"
-WB_CONTENT_BASE = "https://feedbacks-api.wildberries.ru"
-WB_WAREHOUSE_BASE = "https://marketplace-api.wildberries.ru"
+# Current WB API bases (as of 2025)
+WB_STATS_BASE = "https://statistics-api.wildberries.ru"
+WB_ANALYTICS_BASE = "https://seller-analytics-api.wildberries.ru"
+WB_FEEDBACKS_BASE = "https://feedbacks-api.wildberries.ru"
 DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=60)
 
 
@@ -40,6 +42,10 @@ class WBClient:
         for attempt in range(3):
             try:
                 async with session.get(url, params=params, headers=self._headers) as resp:
+                    if resp.status == 429:
+                        # Rate limited — wait and retry
+                        await asyncio.sleep(60)
+                        continue
                     if resp.status != 200:
                         body = await resp.text()
                         logger.error("[%s] %s returned %s: %s", self.shop_id, endpoint, resp.status, body[:800])
@@ -50,59 +56,78 @@ class WBClient:
                 if attempt == 2:
                     logger.exception("[%s] %s failed after retries", self.shop_id, endpoint)
                     return None
-                await asyncio.sleep(1.5 * (attempt + 1))
+                await asyncio.sleep(2 * (attempt + 1))
+        return None
+
+    async def _post(self, base: str, endpoint: str, payload: dict) -> Any | None:
+        url = f"{base}{endpoint}"
+        session = await self._get_session()
+        for attempt in range(3):
+            try:
+                async with session.post(url, json=payload, headers=self._headers) as resp:
+                    if resp.status == 429:
+                        await asyncio.sleep(60)
+                        continue
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.error("[%s] %s returned %s: %s", self.shop_id, endpoint, resp.status, body[:800])
+                        return None
+                    return await resp.json()
+            except Exception as exc:
+                logger.warning("[%s] %s attempt %s failed: %s", self.shop_id, endpoint, attempt + 1, exc)
+                if attempt == 2:
+                    return None
+                await asyncio.sleep(2 * (attempt + 1))
         return None
 
     async def get_sales(self, date_from: date, date_to: date) -> list[dict[str, Any]]:
-        # WB Statistics API — orders report
-        data = await self._get(
-            WB_BASE,
-            "/api/v1/supplier/orders",
+        """
+        Uses the Sales Funnel analytics endpoint — returns orders/buyouts per nmId.
+        Token needs 'Analytics' permission in WB cabinet.
+        """
+        data = await self._post(
+            WB_ANALYTICS_BASE,
+            "/api/analytics/v3/sales-funnel/products",
             {
-                "dateFrom": date_from.isoformat(),
-                "dateTo": date_to.isoformat(),
-                "flag": 0,  # 0 = all orders, 1 = only new since dateFrom
+                "selectedPeriod": {
+                    "start": date_from.isoformat(),
+                    "end": date_to.isoformat(),
+                },
+                "limit": 1000,
+                "offset": 0,
             },
         )
         if not data:
             return []
 
-        # Aggregate by nmId (product article)
-        from collections import defaultdict
-        agg: dict[str, dict] = defaultdict(lambda: {"sku_name": "", "units_sold": 0, "revenue": 0.0, "returns": 0})
-        for order in data:
-            nm_id = str(order.get("nmId") or order.get("nmid") or "unknown")
-            name = order.get("subject") or order.get("supplierArticle") or nm_id
-            price = float(order.get("totalPrice") or order.get("finishedPrice") or 0)
-            is_return = order.get("isReturn", False)
-            agg[nm_id]["sku_name"] = name
-            if is_return:
-                agg[nm_id]["returns"] += 1
-            else:
-                agg[nm_id]["units_sold"] += 1
-                agg[nm_id]["revenue"] += price
-
-        return [
-            {
-                "sku_id": sku_id,
-                "sku_name": vals["sku_name"],
-                "units_sold": vals["units_sold"],
-                "revenue": vals["revenue"],
-                "returns": vals["returns"],
-            }
-            for sku_id, vals in agg.items()
-        ]
+        results = []
+        for item in data.get("data", {}).get("products", []):
+            product = item.get("product", {})
+            stat = item.get("statistic", {}).get("selected", {})
+            nm_id = str(product.get("nmId", "unknown"))
+            name = product.get("title") or product.get("vendorCode") or nm_id
+            results.append({
+                "sku_id": nm_id,
+                "sku_name": name,
+                "units_sold": int(stat.get("orderCount") or 0),
+                "revenue": float(stat.get("orderSum") or 0),
+                "returns": int(stat.get("cancelCount") or 0),
+            })
+        return results
 
     async def get_stock_levels(self) -> list[dict[str, Any]]:
+        """
+        Uses Statistics API stocks endpoint.
+        Token needs 'Statistics' permission.
+        """
         data = await self._get(
-            WB_BASE,
+            WB_STATS_BASE,
             "/api/v1/supplier/stocks",
-            {"dateFrom": "2000-01-01"},  # WB requires a dateFrom but returns current stocks
+            {"dateFrom": "2000-01-01"},
         )
         if not data:
             return []
 
-        from collections import defaultdict
         agg: dict[str, dict] = defaultdict(lambda: {"sku_name": "", "stock": 0})
         for item in data:
             nm_id = str(item.get("nmId") or "unknown")
@@ -115,8 +140,11 @@ class WBClient:
         ]
 
     async def get_reviews(self, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        Token needs 'Feedbacks' permission.
+        """
         data = await self._get(
-            WB_CONTENT_BASE,
+            WB_FEEDBACKS_BASE,
             "/api/v1/feedbacks",
             {
                 "isAnswered": "false",
